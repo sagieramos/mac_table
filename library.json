@@ -1,0 +1,19 @@
+{
+    "name": "mac_table",
+    "version": "1.0.0",
+    "description": "A MAC address table library with expiry management for embedded systems.",
+    "authors": [
+      {
+        "name": "Stanley Osagie Ramos",
+        "email": "sagiecyber@gmail.com"
+      }
+    ],
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/sagieramos/mac_table.git"
+    },
+    "license": "MIT",
+    "frameworks": ["arduino", "espidf"],
+    "platforms": ["espressif32", "atmelavr", "mbed"]
+  }
+  
