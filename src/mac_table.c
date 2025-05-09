@@ -259,6 +259,58 @@ bool mac_table_get_stats(const mac_table_t *table, mac_table_stats_t *stats){
     return false;
 }
 
+int mac_table_evict_by_role(mac_table_t *table, uint8_t role) {
+    int evicted_count = 0;
+    for (size_t i = 0; i < table->size; i++) {
+        mac_entry_t *entry = &table->entries[i];
+        if (entry->state == SLOT_OCCUPIED && entry->role == role) {
+            
+            entry->state = SLOT_TOMBSTONE;
+            evicted_count++;
+            table->stats->total_deletes++;
+            table->stats->active_entries--;
+
+            if (table->on_event) {
+                table->on_event(i, entry->mac, MAC_TABLE_DELETED);
+            }
+    
+            expiry_manager_delete(table->expiry_manager, i);
+        }
+    }
+    return evicted_count;
+}
+
+int mac_table_clear(mac_table_t *table) {
+    int cleared_count = 0;
+    for (size_t i = 0; i < table->size; i++) {
+        mac_entry_t *entry = &table->entries[i];
+        if (entry->state == SLOT_OCCUPIED) {
+            entry->state = SLOT_TOMBSTONE;
+            cleared_count++;
+            table->stats->total_deletes++;
+            table->stats->active_entries--;
+
+            if (table->on_event) {
+                table->on_event(i, entry->mac, MAC_TABLE_DELETED);
+            }
+    
+            expiry_manager_delete(table->expiry_manager, i);
+        }
+    }
+    
+    return cleared_count;
+}
+
+bool mac_table_reset_stats(mac_table_t *table) {
+    if (table && table->stats) {
+        table->stats->total_inserts = 0;
+        table->stats->total_deletes = 0;
+        table->stats->total_expired = 0;
+        return true;
+    }
+    return false;
+}
+
 void mac_to_str(const uint8_t *mac, char *str)
 {
     if (!mac || !str) {
@@ -278,59 +330,6 @@ void mac_to_str(const uint8_t *mac, char *str)
     }
     str[j] = '\0';
 }
-
-int mac_table_evict_by_role(mac_table_t *table, uint8_t role) {
-    int evicted_count = 0;
-    for (size_t i = 0; i < table->size; i++) {
-        mac_entry_t *entry = &table->entries[i];
-        if (entry->state == SLOT_OCCUPIED && entry->role == role) {
-            
-            entry->state = SLOT_TOMBSTONE;
-            evicted_count++;
-            table->stats->total_deletes++;
-            table->stats->active_entries--;
-
-            if (table->on_event) {
-                table->on_event(index, entry->mac, MAC_TABLE_DELETED);
-            }
-    
-            expiry_manager_delete(table->expiry_manager, index);
-        }
-    }
-    return evicted_count;
-}
-
-int mac_table_clear(mac_table_t *table) {
-    int cleared_count = 0;
-    for (size_t i = 0; i < table->size; i++) {
-        mac_entry_t *entry = &table->entries[i];
-        if (entry->state == SLOT_OCCUPIED) {
-            entry->state = SLOT_TOMBSTONE;
-            cleared_count++;
-            table->stats->total_deletes++;
-            table->stats->active_entries--;
-
-            if (table->on_event) {
-                table->on_event(index, entry->mac, MAC_TABLE_DELETED);
-            }
-    
-            expiry_manager_delete(table->expiry_manager, index);
-        }
-    }
-    
-    return cleared_count;
-}
-
-bool mac_table_reset_stats(mac_table_t *table) {
-    if (table && table->stats) {
-        table->stats->total_inserts = 0;
-        table->stats->total_deletes = 0;
-        table->stats->total_expired = 0;
-        return true;
-    }
-    return false;
-}
-
 
 bool str_to_mac(const char *str, uint8_t *mac)
 {
