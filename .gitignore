@@ -1,5 +1,6 @@
 .pio
 .vscode
 platformio.ini
-*/CMakeLists.txt
+**/CMakeLists.txt
+CMakeLists.txt
 sdkconfig*

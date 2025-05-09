@@ -97,7 +97,7 @@ Set the expiration duration for MAC addresses in the mac_table_init() call.
 mac_table_init(&mac_table, mac_table_entries, MAC_TABLE_SIZE, 300, mac_table_event_callback);
 ```
 ## License
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/sagieramos/mac_table/blob/main/README.md) file for more details.
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/sagieramos/mac_table/blob/main/LICENSE) file for more details.
 ## Acknowledgments
 Developed with the help of AI tools (OpenAI ChatGPT, Grok AI, Claude).
 
