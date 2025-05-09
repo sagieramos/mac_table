@@ -1,0 +1,10 @@
+{
+    "name": "mac_table_lib",
+    "version": "1.0.0",
+    "description": "A MAC Address Table with Expiry Management",
+    "author": "Stanley Osagie Ramos",
+    "license": "MIT",
+    "frameworks": ["arduino", "espidf"],
+    "platforms": ["espressif32"],
+    "dependencies": []
+}
