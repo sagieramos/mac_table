@@ -5,7 +5,8 @@
     "authors": [
       {
         "name": "Stanley Osagie Ramos",
-        "email": "sagiecyber@gmail.com"
+        "email": "sagiecyber@gmail.com",
+	"maintainer": true
       }
     ],
     "repository": {
@@ -13,7 +14,7 @@
       "url": "https://github.com/sagieramos/mac_table.git"
     },
     "license": "MIT",
-    "frameworks": ["arduino", "espidf"],
-    "platforms": ["espressif32", "atmelavr", "mbed"]
+    "frameworks": "*",
+    "platforms": "*"
   }
   
