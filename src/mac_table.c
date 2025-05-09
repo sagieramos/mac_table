@@ -100,6 +100,11 @@ mac_entry_result_t mac_table_insert_ex(mac_table_t *table, const uint8_t *mac, c
             entry->state = SLOT_OCCUPIED;
             entry->timeout_duration = timeout;
             entry->role = role;
+
+            // Update statistics
+            table->stats->total_inserts++;
+            table->stats->active_entries++;
+
             if (table->expiry_manager) {
                 expiry_manager_add_or_update(table->expiry_manager, probe);
             }
@@ -107,9 +112,6 @@ mac_entry_result_t mac_table_insert_ex(mac_table_t *table, const uint8_t *mac, c
                 table->on_event(probe, mac, MAC_TABLE_INSERTED);
             }
 
-            // Update statistics
-            table->stats->total_inserts++;
-            table->stats->active_entries++;
 
             return MAC_TABLE_INSERTED;
         }
@@ -121,16 +123,17 @@ mac_entry_result_t mac_table_insert_ex(mac_table_t *table, const uint8_t *mac, c
         entry->timeout_duration = timeout;
         entry->role = role;
         entry->state = SLOT_OCCUPIED;
+
+                // Update statistics
+                table->stats->total_inserts++;
+                table->stats->active_entries++;
+        
         if (table->expiry_manager) {
             expiry_manager_add_or_update(table->expiry_manager, first_tombstone);
         }
         if (table->on_event) {
             table->on_event(first_tombstone, mac, MAC_TABLE_INSERTED);
         }
-
-        // Update statistics
-        table->stats->total_inserts++;
-        table->stats->active_entries++;
 
         return MAC_TABLE_INSERTED;
     }
@@ -185,16 +188,17 @@ mac_entry_result_t mac_table_delete(mac_table_t *table, const uint8_t *mac)
 
         if (entry->state == SLOT_OCCUPIED && memcmp(entry->mac, mac, MAC_ADDR_LEN) == 0) {
             entry->state = SLOT_TOMBSTONE;
+
+            // Update statistics
+            table->stats->total_deletes++;
+            table->stats->active_entries--;
+
             if (table->expiry_manager) {
                 expiry_manager_delete(table->expiry_manager, probe);
             }
             if (table->on_event) {
                 table->on_event(probe, mac, MAC_TABLE_DELETED);
             }
-
-            // Update statistics
-            table->stats->total_deletes++;
-            table->stats->active_entries--;
 
             return MAC_TABLE_DELETED;
         }
@@ -226,6 +230,25 @@ mac_entry_result_t mac_table_get_by_index(const mac_table_t *table, size_t index
     return MAC_TABLE_OK;
 }
 
+void mac_table_delete_by_index(mac_table_t *table, size_t index) {
+    if (index >= table->size) return;
+
+    mac_entry_t *entry = &table->entries[index];
+    if (entry->state == SLOT_OCCUPIED) {
+        entry->state = SLOT_TOMBSTONE;
+
+        table->stats->total_deletes++;
+        table->stats->active_entries--;
+
+        if (table->on_event) {
+            table->on_event(index, entry->mac, MAC_TABLE_DELETED);
+        }
+
+        expiry_manager_delete(table->expiry_manager, index);
+    }
+}
+
+
 
 bool mac_table_get_stats(const mac_table_t *table, mac_table_stats_t *stats){
     if (table && stats) {
@@ -235,7 +258,6 @@ bool mac_table_get_stats(const mac_table_t *table, mac_table_stats_t *stats){
 
     return false;
 }
-
 
 void mac_to_str(const uint8_t *mac, char *str)
 {
@@ -256,6 +278,59 @@ void mac_to_str(const uint8_t *mac, char *str)
     }
     str[j] = '\0';
 }
+
+int mac_table_evict_by_role(mac_table_t *table, uint8_t role) {
+    int evicted_count = 0;
+    for (size_t i = 0; i < table->size; i++) {
+        mac_entry_t *entry = &table->entries[i];
+        if (entry->state == SLOT_OCCUPIED && entry->role == role) {
+            
+            entry->state = SLOT_TOMBSTONE;
+            evicted_count++;
+            table->stats->total_deletes++;
+            table->stats->active_entries--;
+
+            if (table->on_event) {
+                table->on_event(index, entry->mac, MAC_TABLE_DELETED);
+            }
+    
+            expiry_manager_delete(table->expiry_manager, index);
+        }
+    }
+    return evicted_count;
+}
+
+int mac_table_clear(mac_table_t *table) {
+    int cleared_count = 0;
+    for (size_t i = 0; i < table->size; i++) {
+        mac_entry_t *entry = &table->entries[i];
+        if (entry->state == SLOT_OCCUPIED) {
+            entry->state = SLOT_TOMBSTONE;
+            cleared_count++;
+            table->stats->total_deletes++;
+            table->stats->active_entries--;
+
+            if (table->on_event) {
+                table->on_event(index, entry->mac, MAC_TABLE_DELETED);
+            }
+    
+            expiry_manager_delete(table->expiry_manager, index);
+        }
+    }
+    
+    return cleared_count;
+}
+
+bool mac_table_reset_stats(mac_table_t *table) {
+    if (table && table->stats) {
+        table->stats->total_inserts = 0;
+        table->stats->total_deletes = 0;
+        table->stats->total_expired = 0;
+        return true;
+    }
+    return false;
+}
+
 
 bool str_to_mac(const char *str, uint8_t *mac)
 {

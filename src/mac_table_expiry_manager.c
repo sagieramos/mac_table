@@ -169,14 +169,14 @@ static void expiry_timer_callback(TimerHandle_t xTimer) {
         
         if (slot_index < table->size && table->entries[slot_index].state == SLOT_OCCUPIED &&
             table->entries[slot_index].timeout_duration == expiry_time) {
+                table->stats->total_expired++;
+                table->stats->active_entries--;
+
             if (table->on_event) {
                 table->on_event(slot_index, table->entries[slot_index].mac, MAC_TABLE_TIMEOUT);
             }
 
             table->entries[slot_index].state = SLOT_TOMBSTONE;
-
-            table->stats->total_expired++;
-            table->stats->active_entries--;
         }
     }
     
@@ -263,6 +263,48 @@ void expiry_manager_delete(mac_table_expiry_manager_t *manager, size_t slot_inde
     } else {
         xTimerStop(manager->expiry_timer, 0);
     }
+}
+
+static bool is_protected_role(uint8_t role, const uint8_t *protected_roles) {
+    if (!protected_roles) {
+        return false;
+    }
+    return role == *protected_roles;
+}
+
+bool mac_table_remove_oldest(mac_table_t *table, const uint8_t *protected_roles) {
+    if (!table || !table->expiry_manager || table->expiry_manager->heap->size == 0) {
+        return false;
+    }
+
+    MinHeap *heap = table->expiry_manager->heap;
+
+    for (size_t i = 0; i < heap->size; ++i) {
+        size_t index = heap->entries[i].slot_index;
+
+        if (index >= table->size) continue;
+
+        mac_entry_t *entry = &table->entries[index];
+        if (entry->state != SLOT_OCCUPIED) continue;
+
+        if (is_protected_role(entry->role, protected_roles)) {
+            continue;  
+        }
+
+        entry->state = SLOT_TOMBSTONE;
+        table->stats->total_deletes++;
+        table->stats->active_entries--;
+
+        expiry_manager_delete(table->expiry_manager, index);
+
+        if (table->on_event) {
+            table->on_event(index, entry->mac, MAC_TABLE_DELETED);
+        }
+
+        return true;
+    }
+
+    return false;
 }
 
 #ifdef __cplusplus
