@@ -2,10 +2,6 @@
 extern "C" {
 #endif
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <time.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/timers.h>
 #include "mac_table.h"
@@ -174,8 +170,13 @@ static void expiry_timer_callback(TimerHandle_t xTimer) {
         if (slot_index < table->size && table->entries[slot_index].state == SLOT_OCCUPIED &&
             table->entries[slot_index].timeout_duration == expiry_time) {
             if (table->on_event) {
-                table->on_event(slot_index, MAC_TABLE_TIMEOUT);
+                table->on_event(slot_index, table->entries[slot_index].mac, MAC_TABLE_TIMEOUT);
             }
+
+            table->entries[slot_index].state = SLOT_TOMBSTONE;
+
+            table->stats->total_expired++;
+            table->stats->active_entries--;
         }
     }
     
