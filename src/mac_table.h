@@ -290,6 +290,102 @@ mac_entry_result_t mac_table_delete(mac_table_t *table, const uint8_t *mac);
 mac_entry_result_t mac_table_get_by_index(const mac_table_t *table,
                                           size_t index, mac_entry_t *info);
 
+/**
+ * @brief Removes the oldest MAC entry from the MAC table that is not protected
+ * by the provided role list.
+ *
+ * This function checks for the oldest entry in the MAC table and evicts it if
+ * its role is not in the `protected_roles` list. If the `protected_roles` list
+ * is `NULL`, then all entries are considered for eviction. The function returns
+ * `true` if a MAC entry was evicted, and `false` if no entries were evicted.
+ *
+ * @param table A pointer to the MAC table (`mac_table_t`) containing the
+ * entries that are subject to eviction.
+ * @param protected_roles A pointer to an array of roles to protect from
+ * eviction. If `NULL`, no roles are protected.
+ *
+ * @return `true` if a MAC entry was successfully evicted, `false` if no
+ * eviction occurred.
+ *
+ * @note
+ * - The function operates based on the expiry order stored in the min-heap in
+ * the expiry manager.
+ * - If the table is empty or if all entries are protected by their roles, the
+ * function will return `false`.
+ * - The function will update statistics (e.g., total deletes) when an entry is
+ * evicted.
+ * - If an entry is evicted, the `on_event` callback will be triggered with the
+ * `MAC_TABLE_DELETE` event.
+ */
+bool mac_table_remove_oldest(mac_table_t *table,
+                             const uint8_t *protected_roles);
+
+/**
+ * @brief Evicts all entries with the given role from the MAC table.
+ *
+ * This function removes all MAC entries from the table that match the provided
+ * role. The entries that have the specified role will be removed, and the
+ * associated space will be freed or marked as available for reuse.
+ *
+ * @param table A pointer to the MAC table (`mac_table_t`).
+ * @param role The role to be evicted from the table. Entries with this role
+ * will be evicted.
+ *
+ * @return The number of entries evicted.
+ */
+int mac_table_evict_by_role(mac_table_t *table, uint8_t role);
+
+/**
+ * @brief Clears all entries from the MAC table.
+ *
+ * This function removes all MAC entries from the table, optionally restoring
+ * the table to its initial state without any entries. If `hard_clear` is
+ * `true`, all entries are completely cleared, otherwise, the table retains its
+ * structure and can be reused.
+ *
+ * @param table A pointer to the MAC table (`mac_table_t`).
+ *
+ * @return The number of entries cleared from the table.
+ */
+int mac_table_clear(mac_table_t *table);
+
+/**
+ * @brief Resets the statistics of the MAC table.
+ *
+ * This function resets all the statistics (insert count, delete count, active
+ * entries, expired entries, etc.) to zero. This is useful when you want to
+ * start counting again or refresh the statistics after a significant event.
+ *
+ * @param table A pointer to the MAC table (`mac_table_t`).
+ *
+ * @return `true` if the stats were successfully reset, `false` if the table is
+ * in an invalid state.
+ */
+bool mac_table_reset_stats(mac_table_t *table);
+
+/**
+ * @brief Retrieves the statistics of the MAC table.
+ *
+ * This function fills the provided `mac_table_stats_t` structure with the
+ * current statistics of the MAC table, including the total number of
+ * inserts, deletes, expired entries, and the number of active entries in
+ * the table.
+ *
+ * @param table A pointer to the MAC table (`mac_table_t`) from which
+ * statistics are to be retrieved.
+ * @param stats A pointer to a `mac_table_stats_t` structure where the
+ * statistics will be stored.
+ *
+ * @return `true` if the statistics were successfully retrieved and the
+ * `stats` structure was filled. `false` if the `table` or `stats` pointer
+ * is `NULL`, or the table is in an invalid state.
+ *
+ * @note
+ * - This function does not modify the MAC table or its entries, it only
+ * retrieves the current statistics.
+ * - Ensure that the `stats` structure is properly initialized before
+ * passing it to this function.
+ */
 bool mac_table_get_stats(const mac_table_t *table, mac_table_stats_t *stats);
 
 /**
