@@ -127,7 +127,7 @@ mac_table_init(&mac_table, mac_table_entries, MAC_TABLE_SIZE, 300, mac_table_eve
 In this example, entries will expire after 300 seconds (5 minutes).
 
 License
-This project is licensed under the MIT License. See the LICENSE file for more details.
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/sagieramos/mac_table/blob/main/LICENSE) file for more details.
 
 Contributing
 Feel free to fork this repository, submit issues, or pull requests for any enhancements or bug fixes. All contributions are welcome!
