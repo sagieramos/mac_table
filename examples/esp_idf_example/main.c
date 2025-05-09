@@ -18,7 +18,7 @@ void mac_table_event_callback(size_t slot_index, mac_entry_result_t status) {
         case MAC_TABLE_DELETED:
             ESP_LOGE(TAG, "MAC address deleted at slot %d\n", (int)slot_index);
             break;
-	    case MAC_TABLE_FULL;
+	    case MAC_TABLE_FULL:
             ESP_LOGE(TAG, "MAC address is full");
             break;
         default:
