@@ -1,45 +1,3 @@
-/**
- * @file mac_table.h
- * @brief MAC address table implementation with expiration and event management.
- *
- * This header defines the data structures and function prototypes for managing
- * a fixed-size MAC address table, including support for entry expiration, role
- * tagging, and customizable insertion behavior. Expired entries are
- * automatically purged via a timer-based expiry manager. Events such as
- * insertion, deletion, and expiration trigger optional user-defined callbacks.
- *
- * This file was developed with the assistance of AI tools (OpenAI ChatGPT) and
- * adapted, tested, and maintained by Stanley Osagie Ramos
- * <sagiecyber@gmail.com>.
- *
- * @author
- * Stanley Osagie Ramos
- *
- * @copyright
- * Copyright (c) 2025 Stanley Osagie Ramos
- *
- * @license
- * MIT License
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
-
 #ifndef MAC_TABLE_H
 #define MAC_TABLE_H
 
@@ -47,12 +5,14 @@
 extern "C" {
 #endif
 
-#include <freertos/FreeRTOS.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
+#include "freertos/queue.h"
 
 /* Length of a MAC address in bytes */
 #define MAC_ADDR_LEN 6
@@ -84,7 +44,7 @@ typedef enum {
  */
 typedef struct {
   uint8_t mac[MAC_ADDR_LEN]; /**< MAC address bytes */
-  time_t timeout_duration;   /**< Absolute expiration time */
+  time_t expiration_time;   /**< Absolute expiration time */
   slot_state_t state;        /**< Current state of this slot */
   uint8_t role; /**< Role associated with this MAC address entry (e.g., client,
                    gateway) */
@@ -98,7 +58,7 @@ typedef struct {
  * @param status     Result or type of event.
  */
 typedef void (*mac_table_event_callback_t)(int slot_index, const uint8_t *mac,
-                                           mac_entry_result_t status);
+                                           const mac_entry_result_t status);
 
 struct mac_table_expiry_manager_t; /**< Forward declaration for expiry manager
                                     */
@@ -168,11 +128,11 @@ typedef struct {
  * @param mac The MAC address to insert.
  * @return mac_entry_result_t The result of the insertion operation. Possible
  * values:
- *         - MAC_TABLE_INSERTED: The MAC address was successfully inserted.
- *         - MAC_TABLE_UPDATED: The MAC address already exists and was updated.
- *         - MAC_TABLE_FULL: The table is full and cannot accommodate the new
+ * - MAC_TABLE_INSERTED: The MAC address was successfully inserted.
+ * - MAC_TABLE_UPDATED: The MAC address already exists and was updated.
+ * - MAC_TABLE_FULL: The table is full and cannot accommodate the new
  * entry.
- *         - MAC_TABLE_NOT_FOUND: The MAC address or table is invalid.
+ * - MAC_TABLE_NOT_FOUND: The MAC address or table is invalid.
  */
 mac_entry_result_t mac_table_insert(mac_table_t *table, const uint8_t *mac);
 
@@ -187,15 +147,15 @@ mac_entry_result_t mac_table_insert(mac_table_t *table, const uint8_t *mac);
  * @param table Pointer to the MAC address table.
  * @param mac The MAC address to insert or update.
  * @param opts Optional parameters for insertion. Can include:
- *             - custom expiration duration (`custom_duration`).
- *             - custom role (`role`).
+ * - custom expiration duration (`custom_duration`).
+ * - custom role (`role`).
  * @return mac_entry_result_t The result of the insertion or update operation.
  * Possible values:
- *         - MAC_TABLE_INSERTED: The MAC address was successfully inserted.
- *         - MAC_TABLE_UPDATED: The MAC address already exists and was updated.
- *         - MAC_TABLE_FULL: The table is full and cannot accommodate the new
+ * - MAC_TABLE_INSERTED: The MAC address was successfully inserted.
+ * - MAC_TABLE_UPDATED: The MAC address already exists and was updated.
+ * - MAC_TABLE_FULL: The table is full and cannot accommodate the new
  * entry.
- *         - MAC_TABLE_NOT_FOUND: The MAC address or table is invalid.
+ * - MAC_TABLE_NOT_FOUND: The MAC address or table is invalid.
  */
 mac_entry_result_t mac_table_insert_ex(mac_table_t *table, const uint8_t *mac,
                                        const mac_insert_options_t *opts);
@@ -269,6 +229,24 @@ mac_entry_result_t mac_table_insert(mac_table_t *table, const uint8_t *mac);
  */
 mac_entry_result_t mac_table_exists(const mac_table_t *table,
                                     const uint8_t *mac);
+
+/**
+ * @brief Get an entry from the table by its MAC address.
+ *
+ * This function searches for a MAC address in the table. If the entry is
+ * found and has not expired, its data is copied to the provided `info`
+ * structure.
+ *
+ * @param table Pointer to the MAC table.
+ * @param mac MAC address to search for.
+ * @param info Pointer to a `mac_entry_t` structure where the entry's
+ * data will be copied if found.
+ * @return mac_entry_result_t The result of the search.
+ * - MAC_TABLE_OK: Entry was found and is valid.
+ * - MAC_TABLE_TIMEOUT: Entry was found but has expired.
+ * - MAC_TABLE_NOT_FOUND: Entry was not found.
+ */
+mac_entry_result_t mac_table_find(const mac_table_t *table, const uint8_t *mac, mac_entry_t *info);
 
 /**
  * @brief Delete a MAC address from the table.
@@ -348,6 +326,8 @@ int mac_table_evict_by_role(mac_table_t *table, uint8_t role);
  * @return The number of entries cleared from the table.
  */
 int mac_table_clear(mac_table_t *table);
+
+bool expiry_manager_remove_oldest(mac_table_expiry_manager_t *manager, const uint8_t *protected_roles);
 
 /**
  * @brief Resets the statistics of the MAC table.

@@ -2,6 +2,7 @@
     "name": "mac_table",
     "version": "1.0.0",
     "description": "A MAC address table library with expiry management for embedded systems.",
+    "keywords": "mac, table, cache, network, portable, embedded, freertos, Arduino, esp32",
     "authors": [
       {
         "name": "Stanley Osagie Ramos",
@@ -16,5 +17,14 @@
     "license": "MIT",
     "frameworks": "*",
     "platforms": "*"
+    "export": {
+    "include": [
+    "src/mac_table.h"
+    ]
+    },
+    "build": {
+    "srcDir": "src",
+    "libLDFMode": "deep+"
+}
   }
   

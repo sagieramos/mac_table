@@ -1,32 +1,46 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <freertos/FreeRTOS.h>
-#include <freertos/timers.h>
 #include "mac_table.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/timers.h"
+#include "freertos/queue.h"
+#include <time.h>
+#include <string.h>
+#include <esp_log.h>
+
+static const char* TAG_EXPIRY = "MAC_EXPIRY";
+#define EXPIRE_QUEUE_DEPTH 10
+#define EXPIRE_TASK_STACK_SIZE 4096 // Increased stack size for safety
 
 // Min-heap entry for tracking expirations
 typedef struct {
-    size_t slot_index;  // Slot index in the MAC table
-    time_t expiry_time; // When the entry expires (timeout_duration)
+    size_t slot_index;
+    time_t expiry_time;
 } HeapEntry;
 
 // Min-heap structure
 typedef struct {
-    HeapEntry *entries; // Array of heap entries
-    size_t size;        // Current number of entries
-    size_t capacity;    // Maximum capacity
+    HeapEntry *entries;
+    size_t size;
+    size_t capacity;
 } MinHeap;
+
+// Message for the expiry task
+typedef enum {
+    MSG_EXPIRE_NOW
+} ExpiryMsg;
 
 // Expiry manager structure
 struct mac_table_expiry_manager_t {
-    mac_table_t *table;          // Reference to the MAC table
-    MinHeap *heap;            // Min-heap for expiration times
-    TimerHandle_t expiry_timer; // FreeRTOS timer
+    mac_table_t *table;
+    MinHeap *heap;
+    TimerHandle_t expiry_timer;
+    QueueHandle_t expiry_queue;
 };
 
-// Initialize min-heap
+// **Improved Min-Heap Implementation**
 MinHeap *min_heap_create(size_t capacity) {
     MinHeap *heap = pvPortMalloc(sizeof(MinHeap));
     if (!heap) return NULL;
@@ -40,7 +54,6 @@ MinHeap *min_heap_create(size_t capacity) {
     return heap;
 }
 
-// Free min-heap
 void min_heap_free(MinHeap *heap) {
     if (heap) {
         vPortFree(heap->entries);
@@ -48,263 +61,271 @@ void min_heap_free(MinHeap *heap) {
     }
 }
 
-// Get parent index in heap
-static inline size_t heap_parent(size_t index) {
-    return (index - 1) / 2;
-}
+static inline size_t heap_parent(size_t index) { return (index - 1) / 2; }
+static inline size_t heap_left_child(size_t index) { return 2 * index + 1; }
+static inline size_t heap_right_child(size_t index) { return 2 * index + 2; }
+static inline void heap_swap(HeapEntry *a, HeapEntry *b) { HeapEntry temp = *a; *a = *b; *b = temp; }
 
-// Get left child index in heap
-static inline size_t heap_left_child(size_t index) {
-    return 2 * index + 1;
-}
-
-// Get right child index in heap
-static inline size_t heap_right_child(size_t index) {
-    return 2 * index + 2;
-}
-
-// Swap two heap entries
-static void heap_swap(MinHeap *heap, size_t i, size_t j) {
-    HeapEntry temp = heap->entries[i];
-    heap->entries[i] = heap->entries[j];
-    heap->entries[j] = temp;
-}
-
-// Bubble up to maintain heap property
-static void heap_bubble_up(MinHeap *heap, size_t index) {
-    while (index > 0) {
-        size_t parent = heap_parent(index);
-        if (heap->entries[index].expiry_time >= heap->entries[parent].expiry_time) {
-            break;
-        }
-        heap_swap(heap, index, parent);
-        index = parent;
+static void heapify_up(MinHeap *heap, size_t index) {
+    while (index > 0 && heap->entries[heap_parent(index)].expiry_time > heap->entries[index].expiry_time) {
+        heap_swap(&heap->entries[index], &heap->entries[heap_parent(index)]);
+        index = heap_parent(index);
     }
 }
 
-// Bubble down to maintain heap property
-static void heap_bubble_down(MinHeap *heap, size_t index) {
+static void heapify_down(MinHeap *heap, size_t index) {
     size_t min_index = index;
-    while (1) {
-        size_t left = heap_left_child(index);
-        size_t right = heap_right_child(index);
-        
-        if (left < heap->size && heap->entries[left].expiry_time < heap->entries[min_index].expiry_time) {
-            min_index = left;
-        }
-        if (right < heap->size && heap->entries[right].expiry_time < heap->entries[min_index].expiry_time) {
-            min_index = right;
-        }
-        if (min_index == index) {
-            break;
-        }
-        heap_swap(heap, index, min_index);
-        index = min_index;
+    size_t left = heap_left_child(index);
+    size_t right = heap_right_child(index);
+
+    if (left < heap->size && heap->entries[left].expiry_time < heap->entries[min_index].expiry_time) {
+        min_index = left;
+    }
+    if (right < heap->size && heap->entries[right].expiry_time < heap->entries[min_index].expiry_time) {
+        min_index = right;
+    }
+
+    if (min_index != index) {
+        heap_swap(&heap->entries[index], &heap->entries[min_index]);
+        heapify_down(heap, min_index);
     }
 }
 
-// Insert entry into heap
-int min_heap_insert(MinHeap *heap, size_t slot_index, time_t expiry_time) {
+static int min_heap_insert(MinHeap *heap, size_t slot_index, time_t expiry_time) {
     if (heap->size >= heap->capacity) {
-        return -1; // Heap full
+        return -1; // Heap is full
     }
-    heap->entries[heap->size].slot_index = slot_index;
-    heap->entries[heap->size].expiry_time = expiry_time;
-    heap_bubble_up(heap, heap->size);
-    heap->size++;
+    size_t index = heap->size++;
+    heap->entries[index].slot_index = slot_index;
+    heap->entries[index].expiry_time = expiry_time;
+    heapify_up(heap, index);
     return 0;
 }
 
-// Remove entry from heap by slot_index
-void min_heap_remove(MinHeap *heap, size_t slot_index) {
-    for (size_t i = 0; i < heap->size; i++) {
-        if (heap->entries[i].slot_index == slot_index) {
-            heap->entries[i] = heap->entries[heap->size - 1];
-            heap->size--;
-            if (i < heap->size) {
-                heap_bubble_up(heap, i);
-                heap_bubble_down(heap, i);
-            }
-            break;
-        }
-    }
-}
-
-// Get earliest expiration time
-time_t min_heap_peek(MinHeap *heap) {
+static int min_heap_pop(MinHeap *heap, size_t *slot_index, time_t *expiry_time) {
     if (heap->size == 0) {
-        return 0; // No entries
-    }
-    return heap->entries[0].expiry_time;
-}
-
-// Pop earliest entry
-int min_heap_pop(MinHeap *heap, size_t *slot_index, time_t *expiry_time) {
-    if (heap->size == 0) {
-        return -1; // Empty heap
+        return -1; // Heap is empty
     }
     *slot_index = heap->entries[0].slot_index;
     *expiry_time = heap->entries[0].expiry_time;
-    heap->entries[0] = heap->entries[heap->size - 1]; 
-    heap->size--;
-    if (heap->size > 0) {
-        heap_bubble_down(heap, 0);
-    }
+    heap->entries[0] = heap->entries[--heap->size];
+    heapify_down(heap, 0);
     return 0;
 }
 
-// FreeRTOS timer callback
-static void expiry_timer_callback(TimerHandle_t xTimer) {
-    mac_table_expiry_manager_t *manager = pvTimerGetTimerID(xTimer);
-    MinHeap *heap = manager->heap;
-    mac_table_t *table = manager->table;
-    
-    time_t now = time(NULL);
-    while (heap->size > 0 && min_heap_peek(heap) <= now) {
-        size_t slot_index;
-        time_t expiry_time;
-        if (min_heap_pop(heap, &slot_index, &expiry_time) != 0) {
-            break;
+static int min_heap_find_and_remove(MinHeap* heap, size_t slot_index) {
+    for (size_t i = 0; i < heap->size; ++i) {
+        if (heap->entries[i].slot_index == slot_index) {
+            heap->entries[i] = heap->entries[--heap->size];
+            heapify_down(heap, i);
+            heapify_up(heap, i);
+            return 0;
         }
-        
-        if (slot_index < table->size && table->entries[slot_index].state == SLOT_OCCUPIED &&
-            table->entries[slot_index].timeout_duration == expiry_time) {
-                table->stats->total_expired++;
-                table->stats->active_entries--;
+    }
+    return -1; // Not found
+}
 
+// Private function to check for protected roles
+static bool is_protected_role(uint8_t role, const uint8_t *protected_roles) {
+    if (!protected_roles) return false;
+    for (const uint8_t *p = protected_roles; *p != 0; ++p) {
+        if (*p == role) return true;
+    }
+    return false;
+}
+
+static void purge_expired_entries(mac_table_expiry_manager_t* manager) {
+    if (!manager || !manager->table || !manager->heap) return;
+    
+    mac_table_t* table = manager->table;
+    time_t now = time(NULL);
+    size_t slot_index;
+    time_t expiry_time;
+
+    // Iterate through the heap and check for expired entries
+    while (manager->heap->size > 0 && manager->heap->entries[0].expiry_time <= now) {
+        // Pop the oldest entry
+        if (min_heap_pop(manager->heap, &slot_index, &expiry_time) != 0) {
+            continue;
+        }
+
+        // Check if the entry is still valid and has the correct slot index
+        if (slot_index < table->size && table->entries[slot_index].state == SLOT_OCCUPIED &&
+            table->entries[slot_index].expiration_time == expiry_time) {
+            
+            // Mark as expired and update stats
+            table->entries[slot_index].state = SLOT_TOMBSTONE;
+            if (table->stats) {
+                table->stats->total_expired++;
+                if (table->stats->active_entries > 0) {
+                    table->stats->active_entries--;
+                }
+            }
             if (table->on_event) {
                 table->on_event(slot_index, table->entries[slot_index].mac, MAC_TABLE_TIMEOUT);
             }
-
-            table->entries[slot_index].state = SLOT_TOMBSTONE;
         }
-    }
-    
-    // Restart timer for next expiration
-    if (heap->size > 0) {
-        time_t next_expiry = min_heap_peek(heap);
-        time_t now = time(NULL);
-        TickType_t ticks = (next_expiry > now) ? pdMS_TO_TICKS((next_expiry - now) * 1000) : 1;
-        xTimerChangePeriod(xTimer, ticks, 0);
-        xTimerStart(xTimer, 0);
     }
 }
 
-// Initialize expiry manager
+static void expiry_timer_callback(TimerHandle_t xTimer) {
+    mac_table_expiry_manager_t* manager = (mac_table_expiry_manager_t*) pvTimerGetTimerID(xTimer);
+    if (manager == NULL) return;
+
+    // Send a message to the expiry task to trigger a purge
+    ExpiryMsg msg = MSG_EXPIRE_NOW;
+    if (xQueueSend(manager->expiry_queue, &msg, 0) != pdTRUE) {
+        ESP_LOGE(TAG_EXPIRY, "Failed to send message to expiry queue.");
+    }
+}
+
+static void expiry_task(void* arg) {
+    mac_table_expiry_manager_t* manager = (mac_table_expiry_manager_t*) arg;
+    ExpiryMsg msg;
+
+    for (;;) {
+        // Wait indefinitely for a message from the timer callback
+        if (xQueueReceive(manager->expiry_queue, &msg, portMAX_DELAY) == pdTRUE) {
+            if (msg == MSG_EXPIRE_NOW) {
+                ESP_LOGD(TAG_EXPIRY, "Expiry task triggered. Purging entries...");
+                purge_expired_entries(manager);
+
+                // Check the heap for the next entry to expire and restart the timer
+                if (manager->heap->size > 0) {
+                    time_t now = time(NULL);
+                    time_t next_expiry_time = manager->heap->entries[0].expiry_time;
+                    int32_t wait_ms = (next_expiry_time > now) ? (next_expiry_time - now) * 1000 : 1;
+                    xTimerChangePeriod(manager->expiry_timer, pdMS_TO_TICKS(wait_ms), 0);
+                    xTimerStart(manager->expiry_timer, 0);
+                } else {
+                    xTimerStop(manager->expiry_timer, 0);
+                }
+            }
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+
 mac_table_expiry_manager_t *expiry_manager_create(mac_table_t *table) {
     mac_table_expiry_manager_t *manager = pvPortMalloc(sizeof(mac_table_expiry_manager_t));
     if (!manager) return NULL;
-    
+
     manager->table = table;
     manager->heap = min_heap_create(table->size);
     if (!manager->heap) {
         vPortFree(manager);
         return NULL;
     }
-    
-    manager->expiry_timer = xTimerCreate("ExpiryTimer", pdMS_TO_TICKS(1000), pdFALSE, manager, expiry_timer_callback);
-    if (!manager->expiry_timer) {
+
+    manager->expiry_queue = xQueueCreate(EXPIRE_QUEUE_DEPTH, sizeof(ExpiryMsg));
+    if (manager->expiry_queue == NULL) {
         min_heap_free(manager->heap);
         vPortFree(manager);
         return NULL;
     }
-    
+
+    manager->expiry_timer = xTimerCreate(
+        "mac_expiry_timer",
+        pdMS_TO_TICKS(1000), // Initial period, will be updated
+        pdFALSE,            // Auto-reload
+        (void *)manager,      // Timer ID, passes a pointer to the manager
+        expiry_timer_callback
+    );
+    if (manager->expiry_timer == NULL) {
+        vQueueDelete(manager->expiry_queue);
+        min_heap_free(manager->heap);
+        vPortFree(manager);
+        return NULL;
+    }
+
+    // Create a dedicated task for handling expiry events
+    if (xTaskCreate(expiry_task, "expiry_task", EXPIRE_TASK_STACK_SIZE, manager, 5, NULL) != pdPASS) {
+        xTimerDelete(manager->expiry_timer, 0);
+        vQueueDelete(manager->expiry_queue);
+        min_heap_free(manager->heap);
+        vPortFree(manager);
+        return NULL;
+    }
+
     return manager;
 }
 
-// Free expiry manager
 void expiry_manager_free(mac_table_expiry_manager_t *manager) {
     if (manager) {
         if (manager->expiry_timer) {
-            xTimerStop(manager->expiry_timer, 0);
             xTimerDelete(manager->expiry_timer, 0);
         }
-        min_heap_free(manager->heap);
+        if (manager->expiry_queue) {
+            vQueueDelete(manager->expiry_queue);
+        }
+        if (manager->heap) {
+            min_heap_free(manager->heap);
+        }
         vPortFree(manager);
     }
 }
 
-// Notify manager of entry addition or update
 void expiry_manager_add_or_update(mac_table_expiry_manager_t *manager, size_t slot_index) {
     if (!manager || slot_index >= manager->table->size) return;
-    
-    mac_entry_t *entry = &manager->table->entries[slot_index];
-    if (entry->state != SLOT_OCCUPIED) return;
-    
-    // Remove existing entry for this slot
-    min_heap_remove(manager->heap, slot_index);
-    
-    // Add new expiration time
-    time_t expiry_time = entry->timeout_duration;
-    min_heap_insert(manager->heap, slot_index, expiry_time);
-    
-    // Update timer
-    time_t now = time(NULL);
-    time_t next_expiry = min_heap_peek(manager->heap);
-    if (next_expiry > 0 && (xTimerIsTimerActive(manager->expiry_timer) == pdFALSE || next_expiry <= now)) {
-        TickType_t ticks = (next_expiry > now) ? pdMS_TO_TICKS((next_expiry - now) * 1000) : 1;
-        xTimerChangePeriod(manager->expiry_timer, ticks, 0);
-        xTimerStart(manager->expiry_timer, 0);
-    }
-}
 
-// Notify manager of entry deletion
-void expiry_manager_delete(mac_table_expiry_manager_t *manager, size_t slot_index) {
-    if (!manager || slot_index >= manager->table->size) return;
-    min_heap_remove(manager->heap, slot_index);
+    time_t new_expiry_time = manager->table->entries[slot_index].expiration_time;
     
-    // Update timer if heap is not empty
+    // First, try to remove the old entry if it exists in the heap
+    min_heap_find_and_remove(manager->heap, slot_index);
+    
+    // Then, insert the new one
+    min_heap_insert(manager->heap, slot_index, new_expiry_time);
+
+    // Restart the timer to reflect the soonest expiration
     if (manager->heap->size > 0) {
         time_t now = time(NULL);
-        time_t next_expiry = min_heap_peek(manager->heap);
-        TickType_t ticks = (next_expiry > now) ? pdMS_TO_TICKS((next_expiry - now) * 1000) : 1;
-        xTimerChangePeriod(manager->expiry_timer, ticks, 0);
+        time_t next_expiry_time = manager->heap->entries[0].expiry_time;
+        int32_t wait_ms = (next_expiry_time > now) ? (next_expiry_time - now) * 1000 : 1;
+        xTimerChangePeriod(manager->expiry_timer, pdMS_TO_TICKS(wait_ms), 0);
         xTimerStart(manager->expiry_timer, 0);
-    } else {
-        xTimerStop(manager->expiry_timer, 0);
     }
 }
 
-static bool is_protected_role(uint8_t role, const uint8_t *protected_roles) {
-    if (!protected_roles) {
-        return false;
-    }
-    return role == *protected_roles;
+void expiry_manager_delete(mac_table_expiry_manager_t *manager, size_t slot_index) {
+    if (!manager || slot_index >= manager->table->size) return;
+    min_heap_find_and_remove(manager->heap, slot_index);
 }
 
-bool mac_table_remove_oldest(mac_table_t *table, const uint8_t *protected_roles) {
-    if (!table || !table->expiry_manager || table->expiry_manager->heap->size == 0) {
-        return false;
-    }
+bool expiry_manager_remove_oldest(mac_table_expiry_manager_t *manager, const uint8_t *protected_roles) {
+    if (!manager || !manager->heap || manager->heap->size == 0) return false;
 
-    MinHeap *heap = table->expiry_manager->heap;
+    MinHeap *heap = manager->heap;
+    size_t slot_index;
+    time_t expiry_time;
+    
+    // Pop entries from the heap until a non-protected one is found or the heap is empty
+    while (min_heap_pop(heap, &slot_index, &expiry_time) == 0) {
+        if (slot_index >= manager->table->size) continue;
 
-    for (size_t i = 0; i < heap->size; ++i) {
-        size_t index = heap->entries[i].slot_index;
-
-        if (index >= table->size) continue;
-
-        mac_entry_t *entry = &table->entries[index];
+        mac_entry_t *entry = &manager->table->entries[slot_index];
         if (entry->state != SLOT_OCCUPIED) continue;
-
+        
         if (is_protected_role(entry->role, protected_roles)) {
-            continue;  
+            // Re-insert this protected entry with its original timeout.
+            min_heap_insert(heap, slot_index, entry->expiration_time);
+            continue;
         }
 
+        // Found a non-protected, oldest entry.
         entry->state = SLOT_TOMBSTONE;
-        table->stats->total_deletes++;
-        table->stats->active_entries--;
-
-        expiry_manager_delete(table->expiry_manager, index);
-
-        if (table->on_event) {
-            table->on_event(index, entry->mac, MAC_TABLE_DELETED);
+        if (manager->table->stats) {
+            manager->table->stats->total_deletes++;
+            if (manager->table->stats->active_entries > 0) {
+                manager->table->stats->active_entries--;
+            }
         }
-
-        return true;
+        if (manager->table->on_event) {
+            manager->table->on_event(slot_index, entry->mac, MAC_TABLE_DELETED);
+        }
+        return true; // Successfully removed one entry
     }
-
-    return false;
+    return false; // No non-protected entry to remove
 }
 
 #ifdef __cplusplus
