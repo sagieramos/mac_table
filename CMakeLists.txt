@@ -1,3 +1,4 @@
 cmake_minimum_required(VERSION 3.16.0)
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+# include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(mac_table)
+add_subdirectory(src)

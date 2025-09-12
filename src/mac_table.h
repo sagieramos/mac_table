@@ -5,14 +5,14 @@
 extern "C" {
 #endif
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/timers.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/timers.h"
-#include "freertos/queue.h"
 
 /* Length of a MAC address in bytes */
 #define MAC_ADDR_LEN 6
@@ -44,7 +44,7 @@ typedef enum {
  */
 typedef struct {
   uint8_t mac[MAC_ADDR_LEN]; /**< MAC address bytes */
-  time_t expiration_time;   /**< Absolute expiration time */
+  time_t expiration_time;    /**< Absolute expiration time */
   slot_state_t state;        /**< Current state of this slot */
   uint8_t role; /**< Role associated with this MAC address entry (e.g., client,
                    gateway) */
@@ -161,39 +161,6 @@ mac_entry_result_t mac_table_insert_ex(mac_table_t *table, const uint8_t *mac,
                                        const mac_insert_options_t *opts);
 
 /**
- * @brief Create and initialize the expiry manager.
- *
- * @param table Pointer to the MAC table.
- * @return Pointer to the created expiry manager, or NULL on failure.
- */
-mac_table_expiry_manager_t *expiry_manager_create(mac_table_t *table);
-
-/**
- * @brief Free resources associated with the expiry manager.
- *
- * @param manager Pointer to the expiry manager.
- */
-void expiry_manager_free(mac_table_expiry_manager_t *manager);
-
-/**
- * @brief Add or update a slot in the expiry manager.
- *
- * @param manager Pointer to the expiry manager.
- * @param slot_index Index of the slot to add or update.
- */
-void expiry_manager_add_or_update(mac_table_expiry_manager_t *manager,
-                                  size_t slot_index);
-
-/**
- * @brief Delete a slot from the expiry manager.
- *
- * @param manager Pointer to the expiry manager.
- * @param slot_index Index of the slot to delete.
- */
-void expiry_manager_delete(mac_table_expiry_manager_t *manager,
-                           size_t slot_index);
-
-/**
  * @brief Initialize a MAC address table.
  *
  * This function initializes a MAC address table by allocating memory for the
@@ -246,7 +213,8 @@ mac_entry_result_t mac_table_exists(const mac_table_t *table,
  * - MAC_TABLE_TIMEOUT: Entry was found but has expired.
  * - MAC_TABLE_NOT_FOUND: Entry was not found.
  */
-mac_entry_result_t mac_table_find(const mac_table_t *table, const uint8_t *mac, mac_entry_t *info);
+mac_entry_result_t mac_table_find(const mac_table_t *table, const uint8_t *mac,
+                                  mac_entry_t *info);
 
 /**
  * @brief Delete a MAC address from the table.
@@ -327,7 +295,8 @@ int mac_table_evict_by_role(mac_table_t *table, uint8_t role);
  */
 int mac_table_clear(mac_table_t *table);
 
-bool expiry_manager_remove_oldest(mac_table_expiry_manager_t *manager, const uint8_t *protected_roles);
+bool expiry_manager_remove_oldest(mac_table_expiry_manager_t *manager,
+                                  const uint8_t *protected_roles);
 
 /**
  * @brief Resets the statistics of the MAC table.

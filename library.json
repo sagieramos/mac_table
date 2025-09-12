@@ -16,7 +16,7 @@
     },
     "license": "MIT",
     "frameworks": "*",
-    "platforms": "*"
+    "platforms": "*",
     "export": {
     "include": [
     "src/mac_table.h"

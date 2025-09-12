@@ -1,8 +1,8 @@
-#include <stdio.h>
-#include "mac_table.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "mac_table.h"
+#include <stdio.h>
 
 #define MAC_TABLE_SIZE 10
 #define MAC_EXPIRY_SECONDS 60
@@ -94,20 +94,22 @@ static void print_mac_stats(void) {
  * @param mac The MAC address to look up.
  */
 static void find_and_print_entry(const uint8_t *mac) {
-    char mac_str[20];
-    mac_to_str(mac, mac_str);
-    mac_entry_t found_entry;
-    
-    ESP_LOGI(TAG, "Looking up MAC address: %s", mac_str);
-    
-    mac_entry_result_t result = mac_table_find(&g_mac_table, mac, &found_entry);
-    
-    if (result == MAC_TABLE_OK) {
-        time_t now = time(NULL);
-        ESP_LOGI(TAG, "Found entry for %s: Role=%u, TTL=%llds", mac_str, found_entry.role, (long long)found_entry.expiration_time - now);
-    } else {
-        ESP_LOGW(TAG, "Entry for %s not found or expired. Status: %d", mac_str, result);
-    }
+  char mac_str[20];
+  mac_to_str(mac, mac_str);
+  mac_entry_t found_entry;
+
+  ESP_LOGI(TAG, "Looking up MAC address: %s", mac_str);
+
+  mac_entry_result_t result = mac_table_find(&g_mac_table, mac, &found_entry);
+
+  if (result == MAC_TABLE_OK) {
+    time_t now = time(NULL);
+    ESP_LOGI(TAG, "Found entry for %s: Role=%u, TTL=%llds", mac_str,
+             found_entry.role, (long long)found_entry.expiration_time - now);
+  } else {
+    ESP_LOGW(TAG, "Entry for %s not found or expired. Status: %d", mac_str,
+             result);
+  }
 }
 
 void app_main(void) {
@@ -138,11 +140,11 @@ void app_main(void) {
   // Check state and stats
   print_mac_table();
   print_mac_stats();
-  
+
   // Demonstrate the  mac_table_find function
   find_and_print_entry(mac1);
   find_and_print_entry(mac3);
-  
+
   // Wait for entries to expire
   vTaskDelay(pdMS_TO_TICKS(15000));
   print_mac_table();
