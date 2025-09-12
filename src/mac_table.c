@@ -249,7 +249,6 @@ void mac_table_delete_by_index(mac_table_t *table, size_t index) {
 }
 
 
-
 bool mac_table_get_stats(const mac_table_t *table, mac_table_stats_t *stats){
     if (table && stats) {
         memcpy(stats, table->stats, sizeof(mac_table_stats_t));
